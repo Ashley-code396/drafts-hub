@@ -1,7 +1,10 @@
 "use client";
 import React from "react";
 
-export function Topbar({ onCommit, isCommitting = false }: { onCommit?: () => void; isCommitting?: boolean }) {
+export function Topbar({ onCommit, isCommitting = false }: { onCommit?: (opts: { epochs?: number; permanent?: boolean }) => void; isCommitting?: boolean }) {
+  const [open, setOpen] = React.useState(false);
+  const [epochs, setEpochs] = React.useState<number | ''>("");
+  const [permanent, setPermanent] = React.useState(true);
   return (
     <div className="flex h-14 items-center gap-3 px-4">
       <div className="flex items-center gap-2 font-semibold tracking-tight">
@@ -15,8 +18,43 @@ export function Topbar({ onCommit, isCommitting = false }: { onCommit?: () => vo
           className="w-full rounded-md border border-black/10 bg-white/70 px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:border-black/20 dark:border-white/10 dark:bg-zinc-900/50 dark:focus:border-white/20"
         />
       </div>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="rounded-md border border-black/10 bg-white px-2 py-2 text-sm hover:bg-zinc-50 dark:border-white/10 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+          aria-haspopup="dialog"
+          aria-expanded={open}
+        >
+          Commit options
+        </button>
+        {open && (
+          <div className="absolute right-0 z-30 mt-2 w-64 rounded-md border border-black/10 bg-white p-3 text-sm shadow-lg dark:border-white/10 dark:bg-zinc-900">
+            <div className="mb-2 font-medium text-zinc-700 dark:text-zinc-200">Commit options</div>
+            <div className="mb-2 flex items-center justify-between">
+              <label className="text-zinc-600 dark:text-zinc-300">Permanent</label>
+              <input type="checkbox" checked={permanent} onChange={(e) => setPermanent(e.target.checked)} />
+            </div>
+            <div className="mb-2">
+              <label className="mb-1 block text-zinc-600 dark:text-zinc-300">Epochs (optional)</label>
+              <input
+                type="number"
+                min={1}
+                className="w-full rounded-md border border-black/10 bg-white px-2 py-1 dark:border-white/10 dark:bg-zinc-800"
+                value={epochs}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setEpochs(v === '' ? '' : Math.max(1, Number(v)));
+                }}
+                placeholder="e.g. 10"
+              />
+            </div>
+            <div className="text-[11px] text-zinc-500">Stored in metadata. Actual permanence depends on Walrus policy.</div>
+          </div>
+        )}
+      </div>
       <button
-        onClick={onCommit}
+        onClick={() => onCommit?.({ epochs: epochs === '' ? undefined : Number(epochs), permanent })}
         disabled={isCommitting}
         aria-busy={isCommitting}
         className="rounded-md bg-black px-3 py-2 text-sm font-medium text-white hover:bg-black/90 disabled:opacity-60 dark:bg-white dark:text-black dark:hover:bg-white/90"

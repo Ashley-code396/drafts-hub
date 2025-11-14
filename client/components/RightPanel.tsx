@@ -24,9 +24,13 @@ function diffSnippet(prev: string, curr: string) {
   return { before: before.slice(0, 220), after: after.slice(0, 220) };
 }
 
-export function RightPanel({ versions }: { versions: Version[] }) {
+export function RightPanel({ versions, autoExpandVersionId }: { versions: Version[]; autoExpandVersionId?: string }) {
   const sorted = [...versions].sort((a, b) => b.createdAt - a.createdAt);
   const AGG = process.env.NEXT_PUBLIC_WALRUS_AGGREGATOR || "https://aggregator.walrus-testnet.walrus.space";
+  const [expanded, setExpanded] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (autoExpandVersionId) setExpanded(autoExpandVersionId);
+  }, [autoExpandVersionId]);
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-black/10 p-3 text-sm font-medium text-zinc-600 dark:border-white/10">Timeline</div>
@@ -40,21 +44,40 @@ export function RightPanel({ versions }: { versions: Version[] }) {
           const next = sorted[idx + 1];
           const { before, after } = diffSnippet(next?.text || "", v.text || "");
           return (
-            <div key={v.id} className="rounded-md border border-black/10 bg-white p-3 text-sm dark:border-white/10 dark:bg-zinc-900">
+            <div
+              key={v.id}
+              className="rounded-md border border-black/10 bg-white p-3 text-sm dark:border-white/10 dark:bg-zinc-900"
+            >
               <div className="mb-1 flex items-center justify-between text-xs text-zinc-500">
                 <span>v{sorted.length - idx}</span>
-                <span>{new Date(v.createdAt).toLocaleTimeString()}</span>
+                <div className="flex items-center gap-2">
+                  <span>{new Date(v.createdAt).toLocaleTimeString()}</span>
+                  <button
+                    className="rounded px-2 py-1 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    onClick={() => setExpanded((e) => (e === v.id ? null : v.id))}
+                  >
+                    {expanded === v.id ? "Hide media" : "Load from Walrus"}
+                  </button>
+                </div>
               </div>
               {v.quiltId && (
-                <div className="mb-2 text-xs">
-                  <span className="text-zinc-500">Quilt:</span>{" "}
+                <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+                  <div className="flex min-w-0 flex-1 items-center gap-1">
+                    <span className="text-zinc-500 shrink-0">Quilt:</span>
+                    <code
+                      className="block max-w-full truncate rounded bg-zinc-100 px-1 py-0.5 text-[11px] text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
+                      title={v.quiltId}
+                    >
+                      {v.quiltId}
+                    </code>
+                  </div>
                   <a
                     href={`${AGG}/v1/blobs/by-quilt-id/${encodeURIComponent(v.quiltId)}/draft.txt`}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-blue-600 underline dark:text-blue-400"
+                    className="shrink-0 rounded border border-black/10 px-2 py-1 text-[11px] hover:bg-zinc-100 dark:border-white/10 dark:hover:bg-zinc-800"
                   >
-                    {v.quiltId}
+                    View draft.txt
                   </a>
                 </div>
               )}
@@ -72,41 +95,64 @@ export function RightPanel({ versions }: { versions: Version[] }) {
                   </div>
                 </div>
               </div>
-              {v.media?.length ? (
-                <div className="mt-2 grid grid-cols-3 gap-2">
-                  {v.media.slice(0, 6).map((m, i) => (
-                    <div key={`${v.id}-${i}`} className="overflow-hidden rounded border border-black/10 dark:border-white/10">
-                      {m.type === "image" && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={m.src} alt={m.title || "image"} className="h-16 w-full object-cover" />
-                      )}
-                      {m.type === "video" && (
-                        <video src={m.src} className="h-16 w-full object-cover" muted />
-                      )}
-                      {m.type === "audio" && (
-                        <div className="p-2 text-[11px] truncate">{m.title || "audio"}</div>
-                      )}
+              {expanded === v.id ? (
+                v.patches && v.patches.length > 0 ? (
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    {v.patches.slice(0, 9).map((p) => {
+                      const id = p.identifier || "";
+                      const lower = id.toLowerCase();
+                      const isImg = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"].some((ext) => lower.endsWith(ext));
+                      const isVideo = [".mp4", ".webm", ".mov", ".m4v", ".ogg"].some((ext) => lower.endsWith(ext));
+                      const isAudio = [".mp3", ".wav", ".ogg", ".m4a", ".flac"].some((ext) => lower.endsWith(ext));
+                      const byIdUrl = `${AGG}/v1/blobs/by-quilt-id/${encodeURIComponent(v.quiltId || "")}/${encodeURIComponent(p.identifier)}`;
+                      const byPatchUrl = `${AGG}/v1/blobs/by-quilt-patch-id/${encodeURIComponent(p.quiltPatchId)}`;
+                      const src = byIdUrl;
+                      return (
+                        <div key={p.quiltPatchId} className="overflow-hidden rounded border border-black/10 dark:border-white/10">
+                          {isImg && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={src} alt={p.identifier} className="h-16 w-full object-cover" />
+                          )}
+                          {isVideo && (
+                            <video src={src} className="h-16 w-full object-cover" muted controls={false} />
+                          )}
+                          {isAudio && (
+                            <audio src={src} className="w-full" controls />
+                          )}
+                          <a
+                            href={isImg || isVideo || isAudio ? src : byPatchUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block truncate px-2 py-1 text-center text-[11px] underline"
+                            title={p.identifier}
+                          >
+                            View on Walrus
+                          </a>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  v.media?.length ? (
+                    <div className="mt-2 grid grid-cols-3 gap-2">
+                      {v.media.slice(0, 9).map((m, i) => (
+                        <div key={`${v.id}-${i}`} className="overflow-hidden rounded border border-black/10 dark:border-white/10">
+                          {m.type === "image" && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={m.src} alt={m.title || "image"} className="h-16 w-full object-cover" />
+                          )}
+                          {m.type === "video" && (
+                            <video src={m.src} className="h-16 w-full object-cover" muted />
+                          )}
+                          {m.type === "audio" && (
+                            <div className="p-2 text-[11px] truncate">{m.title || "audio"}</div>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  ) : null
+                )
               ) : null}
-              {v.patches && v.patches.length > 0 && (
-                <div className="mt-2 space-y-1 text-xs">
-                  {v.patches.slice(0, 6).map((p) => (
-                    <div key={p.quiltPatchId} className="truncate">
-                      <a
-                        href={`${AGG}/v1/blobs/by-quilt-patch-id/${encodeURIComponent(p.quiltPatchId)}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-blue-600 underline dark:text-blue-400"
-                        title={p.identifier}
-                      >
-                        {p.identifier}
-                      </a>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           );
         })}

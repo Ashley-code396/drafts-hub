@@ -1,5 +1,5 @@
 "use client";
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { AppShell } from "../components/AppShell";
 import { Topbar } from "../components/Topbar";
 import { Sidebar } from "../components/Sidebar";
@@ -10,8 +10,32 @@ export default function Home() {
   const [versions, setVersions] = useState<Version[]>([]);
   const snapshotProviderRef = useRef<null | (() => { text: string; doc: any; media: { type: string; src: string; title?: string }[] })>(null);
   const [isCommitting, setIsCommitting] = useState(false);
+  const STORAGE_KEY = "draftshub_versions_v1";
+  const [autoExpandId, setAutoExpandId] = useState<string | null>(null);
 
-  const handleCommit = async () => {
+  // Load persisted versions on first mount
+  useEffect(() => {
+    try {
+      const raw = typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          setVersions(parsed as Version[]);
+        }
+      }
+    } catch {}
+  }, []);
+
+  // Persist versions on change
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(versions));
+      }
+    } catch {}
+  }, [versions]);
+
+  const handleCommit = async (opts?: { epochs?: number; permanent?: boolean }) => {
     try {
       setIsCommitting(true);
       const snap = snapshotProviderRef.current?.();
@@ -41,6 +65,8 @@ export default function Home() {
           type: "text",
           mime: "text/plain",
           createdAt: String(Date.now()),
+          permanent: String(opts?.permanent ?? true),
+          epochs: String(opts?.epochs ?? 1),
         },
       });
       // Attach media files
@@ -59,6 +85,8 @@ export default function Home() {
               mime: blob.type || "application/octet-stream",
               title: m.title || filename,
               createdAt: String(Date.now()),
+              permanent: String(opts?.permanent ?? true),
+              epochs: String(opts?.epochs ?? 1),
             },
           });
           counter += 1;
@@ -67,30 +95,60 @@ export default function Home() {
         }
       }
       // Attach Walrus-native metadata JSON under reserved field name `_metadata`
-      try {
-        fd.append("_metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
-      } catch {
-        // Fallback: append as simple string
-        fd.append("_metadata", JSON.stringify(metadata));
-      }
-      const qs = new URLSearchParams({ epochs: "1", permanent: "true" }).toString();
-      const walrusRes = await fetch(`${publisher}/v1/quilts?${qs}`, { method: "PUT", body: fd });
+      // Must be a JSON sequence (array) per Walrus schema
+      fd.append(
+        "_metadata",
+        new Blob([JSON.stringify(metadata, null, 2)], { type: "application/json" }),
+        "_metadata"
+      );
+      // Build query params from user commit options
+      const qsObj: Record<string, string> = {
+        epochs: String(opts?.epochs ?? 1),
+        permanent: String(opts?.permanent ?? true),
+      };
+      const qs = new URLSearchParams(qsObj).toString();
+      const walrusRes = await fetch(`/api/walrus/quilts${qs ? `?${qs}` : ""}`, { method: "PUT", body: fd });
       if (!walrusRes.ok) {
-        // Fallback to stub route to ensure demo flow continues
-        const stub = await fetch("/api/commit", { method: "POST" }).then((r) => r.json());
-        alert(`Committed (stub fallback)\nCID: ${stub.cid}\nHash: ${stub.hash}`);
+        // Prefer surfacing real Walrus errors to avoid fake IDs
+        let msg = `Walrus error ${walrusRes.status}`;
+        try {
+          const ct = walrusRes.headers.get("content-type") || "";
+          if (ct.includes("application/json")) {
+            const j = await walrusRes.json();
+            msg += `\n${JSON.stringify(j, null, 2)}`;
+          } else {
+            const t = await walrusRes.text();
+            msg += `\n${t}`;
+          }
+        } catch {}
+        // Optional dev fallback via env flag
+        if (process.env.NEXT_PUBLIC_WALRUS_FALLBACK === "1") {
+          const stub = await fetch("/api/commit", { method: "POST" }).then((r) => r.json());
+          alert(`Committed (stub fallback)\nCID: ${stub.cid}\nHash: ${stub.hash}`);
+        } else {
+          throw new Error(msg);
+        }
       } else {
         const out = await walrusRes.json();
-        const quiltId = out?.blobStoreResult?.newlyCreated?.blobObject?.blobId || out?.alreadyCertified?.blobId || out?.blobId;
+        const quiltId = out?.blobStoreResult?.newlyCreated?.blobObject?.blobId || out?.alreadyCertified?.blobId || out?.blobId || out?.quiltId;
         const patchesArr: Array<{ identifier: string; quiltPatchId: string }> = Array.isArray(out?.storedQuiltBlobs)
-          ? out.storedQuiltBlobs
-          : [];
-        const patches = patchesArr.length ? patchesArr.map((p: any) => `${p.identifier}: ${p.quiltPatchId}`).join("\n") : "";
-        // Store Quilt IDs into the latest version entry
-        if (latestVersionId) {
-          setVersions((prev) => prev.map((it) => (it.id === latestVersionId ? { ...it, quiltId, patches: patchesArr } as any : it)));
+          ? out.storedQuiltBlobs.map((b: any) => ({ identifier: b.identifier || b.name || "", quiltPatchId: b.quiltPatchId || b.patchId || b.blobId || "" }))
+          : (Array.isArray(out?.patches) ? out.patches : []);
+        if (latestVersionId && (quiltId || patchesArr.length)) {
+          setVersions((prev) =>
+            prev.map((ver) =>
+              ver.id === latestVersionId
+                ? {
+                    ...ver,
+                    quiltId: quiltId || ver.quiltId,
+                    patches: Array.isArray(patchesArr) ? patchesArr : ver.patches,
+                  }
+                : ver
+            )
+          );
+          setAutoExpandId(latestVersionId);
         }
-        alert(`Committed to Walrus\nQuilt ID: ${quiltId || "(see console)"}\n${patches ? `Patches:\n${patches}` : ""}`);
+        alert(`Committed to Walrus\nQuilt ID: ${quiltId || "(see console)"}\n${patchesArr.length ? `Patches:\n${patchesArr.map((p) => `${p.identifier}: ${p.quiltPatchId}`).join("\n")}` : ""}`);
         console.log("Walrus response", out);
       }
     } catch (e: any) {
@@ -104,7 +162,7 @@ export default function Home() {
     <AppShell
       topbar={<Topbar onCommit={handleCommit} isCommitting={isCommitting} />}
       sidebar={<Sidebar />}
-      right={<RightPanel versions={versions} />}
+      right={<RightPanel versions={versions} autoExpandVersionId={autoExpandId || undefined} />}
     >
       <EditorCanvas
         registerSnapshotProvider={(fn) => {
