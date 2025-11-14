@@ -131,6 +131,13 @@ export default function Home() {
       } else {
         const out = await walrusRes.json();
         const quiltId = out?.blobStoreResult?.newlyCreated?.blobObject?.blobId || out?.alreadyCertified?.blobId || out?.blobId || out?.quiltId;
+        const deletable = (out?.blobStoreResult?.newlyCreated?.blobObject?.deletable ?? out?.alreadyCertified?.deletable) as boolean | undefined;
+        const permanentFlag = deletable === false;
+        const startEpoch = out?.blobStoreResult?.newlyCreated?.blobObject?.storage?.startEpoch;
+        const endEpoch = out?.blobStoreResult?.newlyCreated?.blobObject?.storage?.endEpoch;
+        const epochsFromStorage = typeof startEpoch === 'number' && typeof endEpoch === 'number' ? Math.max(0, endEpoch - startEpoch) : undefined;
+        const epochsFromOp = out?.blobStoreResult?.newlyCreated?.resourceOperation?.registerFromScratch?.epochsAhead;
+        const epochsCount = (typeof opts?.epochs === 'number' ? opts?.epochs : undefined) ?? (typeof epochsFromOp === 'number' ? epochsFromOp : undefined) ?? epochsFromStorage;
         const patchesArr: Array<{ identifier: string; quiltPatchId: string }> = Array.isArray(out?.storedQuiltBlobs)
           ? out.storedQuiltBlobs.map((b: any) => ({ identifier: b.identifier || b.name || "", quiltPatchId: b.quiltPatchId || b.patchId || b.blobId || "" }))
           : (Array.isArray(out?.patches) ? out.patches : []);
@@ -142,6 +149,8 @@ export default function Home() {
                     ...ver,
                     quiltId: quiltId || ver.quiltId,
                     patches: Array.isArray(patchesArr) ? patchesArr : ver.patches,
+                    permanent: permanentFlag ?? ver.permanent,
+                    epochs: typeof epochsCount === 'number' ? epochsCount : ver.epochs,
                   }
                 : ver
             )
