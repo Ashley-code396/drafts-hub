@@ -1,12 +1,12 @@
 "use client";
 import React from "react";
 
-export function Topbar({ onCommit }: { onCommit?: () => void }) {
+export function Topbar({ onCommit, isCommitting = false }: { onCommit?: () => void; isCommitting?: boolean }) {
   return (
     <div className="flex h-14 items-center gap-3 px-4">
       <div className="flex items-center gap-2 font-semibold tracking-tight">
         <span className="inline-block h-6 w-6 rounded bg-black dark:bg-white" />
-        <span>Drafts Hub</span>
+        <span>DraftsHub</span>
       </div>
       <div className="mx-4 flex-1">
         <input
@@ -17,9 +17,11 @@ export function Topbar({ onCommit }: { onCommit?: () => void }) {
       </div>
       <button
         onClick={onCommit}
-        className="rounded-md bg-black px-3 py-2 text-sm font-medium text-white hover:bg-black/90 dark:bg-white dark:text-black dark:hover:bg-white/90"
+        disabled={isCommitting}
+        aria-busy={isCommitting}
+        className="rounded-md bg-black px-3 py-2 text-sm font-medium text-white hover:bg-black/90 disabled:opacity-60 dark:bg-white dark:text-black dark:hover:bg-white/90"
       >
-        Commit draft
+        {isCommitting ? "Committing…" : "Commit draft"}
       </button>
       <button className="ml-2 h-8 w-8 rounded-full bg-zinc-200 dark:bg-zinc-800" aria-label="Account" />
     </div>

@@ -24,12 +24,12 @@ export async function POST(req: NextRequest) {
 
   let transformed = text;
   if (action === "clarity") {
-    transformed = collapseSpaces(text);
+    transformed = `Clarified: ${collapseSpaces(text)}`;
   } else if (action === "grammar") {
-    transformed = ensurePunctuation(capitalizeFirst(collapseSpaces(text)));
+    transformed = `Fixed: ${ensurePunctuation(capitalizeFirst(collapseSpaces(text)))}`;
   } else if (action === "tone") {
     const tag = tone?.toLowerCase() || "friendly";
-    transformed = `[${tag}] ` + collapseSpaces(text);
+    transformed = `Tone(${tag}): ${collapseSpaces(text)}`;
   }
 
   // Simulate latency for UX

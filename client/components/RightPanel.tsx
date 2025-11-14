@@ -6,6 +6,8 @@ export type Version = {
   createdAt: number;
   text: string;
   media: { type: string; src: string; title?: string }[];
+  quiltId?: string;
+  patches?: { identifier: string; quiltPatchId: string }[];
 };
 
 function diffSnippet(prev: string, curr: string) {
@@ -24,6 +26,7 @@ function diffSnippet(prev: string, curr: string) {
 
 export function RightPanel({ versions }: { versions: Version[] }) {
   const sorted = [...versions].sort((a, b) => b.createdAt - a.createdAt);
+  const AGG = process.env.NEXT_PUBLIC_WALRUS_AGGREGATOR || "https://aggregator.walrus-testnet.walrus.space";
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-black/10 p-3 text-sm font-medium text-zinc-600 dark:border-white/10">Timeline</div>
@@ -42,6 +45,19 @@ export function RightPanel({ versions }: { versions: Version[] }) {
                 <span>v{sorted.length - idx}</span>
                 <span>{new Date(v.createdAt).toLocaleTimeString()}</span>
               </div>
+              {v.quiltId && (
+                <div className="mb-2 text-xs">
+                  <span className="text-zinc-500">Quilt:</span>{" "}
+                  <a
+                    href={`${AGG}/v1/blobs/by-quilt-id/${encodeURIComponent(v.quiltId)}/draft.txt`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-blue-600 underline dark:text-blue-400"
+                  >
+                    {v.quiltId}
+                  </a>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <div className="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">Prev</div>
@@ -74,6 +90,23 @@ export function RightPanel({ versions }: { versions: Version[] }) {
                   ))}
                 </div>
               ) : null}
+              {v.patches && v.patches.length > 0 && (
+                <div className="mt-2 space-y-1 text-xs">
+                  {v.patches.slice(0, 6).map((p) => (
+                    <div key={p.quiltPatchId} className="truncate">
+                      <a
+                        href={`${AGG}/v1/blobs/by-quilt-patch-id/${encodeURIComponent(p.quiltPatchId)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-blue-600 underline dark:text-blue-400"
+                        title={p.identifier}
+                      >
+                        {p.identifier}
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
