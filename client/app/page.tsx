@@ -5,6 +5,8 @@ import { Topbar } from "../components/Topbar";
 import { Sidebar } from "../components/Sidebar";
 import { EditorCanvas } from "../components/EditorCanvas";
 import { RightPanel, type Version } from "../components/RightPanel";
+import { encryptBytes, strip0x } from "./seal";
+import { TESTNET_PACKAGE_ID } from "./constants";
 
 export default function Home() {
   const [versions, setVersions] = useState<Version[]>([]);
@@ -12,6 +14,11 @@ export default function Home() {
   const [isCommitting, setIsCommitting] = useState(false);
   const STORAGE_KEY = "draftshub_versions_v1";
   const [autoExpandId, setAutoExpandId] = useState<string | null>(null);
+  function u8ToArrayBuffer(u8: Uint8Array): ArrayBuffer {
+    const ab = new ArrayBuffer(u8.byteLength);
+    new Uint8Array(ab).set(u8);
+    return ab;
+  }
 
   // Load persisted versions on first mount
   useEffect(() => {
@@ -56,19 +63,45 @@ export default function Home() {
       const publisher = process.env.NEXT_PUBLIC_WALRUS_PUBLISHER || "https://publisher.walrus-testnet.walrus.space";
       if (!snap) throw new Error("Nothing to commit");
       const fd = new FormData();
-      // Add draft text as a file in the quilt
-      fd.append("draft.txt", new Blob([snap.text || ""], { type: "text/plain" }), "draft.txt");
+      const sealEnabled = true;
+      const sealPackageId = process.env.NEXT_PUBLIC_SEAL_PACKAGE_ID || TESTNET_PACKAGE_ID; // hex string 0x...
       const metadata: Array<{ identifier: string; tags: Record<string, string> }> = [];
-      metadata.push({
-        identifier: "draft.txt",
-        tags: {
-          type: "text",
-          mime: "text/plain",
-          createdAt: String(Date.now()),
-          permanent: String(opts?.permanent ?? true),
-          epochs: String(opts?.epochs ?? 1),
-        },
-      });
+      // Add draft text as a file in the quilt (encrypt if enabled)
+      {
+        const raw = new TextEncoder().encode(snap.text || "");
+        if (sealEnabled && sealPackageId) {
+          const { encrypted, idHex } = await encryptBytes(raw, { packageIdHex: sealPackageId });
+          const encBlob = new Blob([u8ToArrayBuffer(encrypted)], { type: "application/octet-stream" });
+          fd.append("draft.txt.seal", encBlob, "draft.txt.seal");
+          metadata.push({
+            identifier: "draft.txt.seal",
+            tags: {
+              type: "text",
+              mime: "application/octet-stream",
+              createdAt: String(Date.now()),
+              permanent: String(opts?.permanent ?? true),
+              epochs: String(opts?.epochs ?? 1),
+              seal: "true",
+              seal_id: `0x${strip0x(idHex)}`,
+              seal_package: sealPackageId,
+              original_name: "draft.txt",
+              original_mime: "text/plain",
+            },
+          });
+        } else {
+          fd.append("draft.txt", new Blob([u8ToArrayBuffer(raw)], { type: "text/plain" }), "draft.txt");
+          metadata.push({
+            identifier: "draft.txt",
+            tags: {
+              type: "text",
+              mime: "text/plain",
+              createdAt: String(Date.now()),
+              permanent: String(opts?.permanent ?? true),
+              epochs: String(opts?.epochs ?? 1),
+            },
+          });
+        }
+      }
       // Attach media files
       let counter = 0;
       for (const m of snap.media) {
@@ -77,18 +110,42 @@ export default function Home() {
           const ext = blob.type.startsWith("image/") ? (blob.type.split("/")[1] || "img") : blob.type.startsWith("video/") ? (blob.type.split("/")[1] || "mp4") : blob.type.startsWith("audio/") ? (blob.type.split("/")[1] || "mp3") : "bin";
           const base = m.title?.replace(/[^a-z0-9-_]/gi, "_") || `${m.type}-${counter}`;
           const filename = `${base || m.type}-${counter}.${ext}`;
-          fd.append(filename, blob, filename);
-          metadata.push({
-            identifier: filename,
-            tags: {
-              type: m.type,
-              mime: blob.type || "application/octet-stream",
-              title: m.title || filename,
-              createdAt: String(Date.now()),
-              permanent: String(opts?.permanent ?? true),
-              epochs: String(opts?.epochs ?? 1),
-            },
-          });
+          if (sealEnabled && sealPackageId) {
+            const buf = new Uint8Array(await blob.arrayBuffer());
+            const { encrypted, idHex } = await encryptBytes(buf, { packageIdHex: sealPackageId });
+            const encBlob = new Blob([u8ToArrayBuffer(encrypted)], { type: "application/octet-stream" });
+            const encName = `${filename}.seal`;
+            fd.append(encName, encBlob, encName);
+            metadata.push({
+              identifier: encName,
+              tags: {
+                type: m.type,
+                mime: "application/octet-stream",
+                title: m.title || filename,
+                createdAt: String(Date.now()),
+                permanent: String(opts?.permanent ?? true),
+                epochs: String(opts?.epochs ?? 1),
+                seal: "true",
+                seal_id: `0x${strip0x(idHex)}`,
+                seal_package: sealPackageId,
+                original_name: filename,
+                original_mime: blob.type || "application/octet-stream",
+              },
+            });
+          } else {
+            fd.append(filename, blob, filename);
+            metadata.push({
+              identifier: filename,
+              tags: {
+                type: m.type,
+                mime: blob.type || "application/octet-stream",
+                title: m.title || filename,
+                createdAt: String(Date.now()),
+                permanent: String(opts?.permanent ?? true),
+                epochs: String(opts?.epochs ?? 1),
+              },
+            });
+          }
           counter += 1;
         } catch {
           // skip any media that can't be fetched
