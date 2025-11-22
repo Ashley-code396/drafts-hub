@@ -1,5 +1,6 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { Button, Card, Flex, TextField } from '@radix-ui/themes';
+import { MagnifyingGlassIcon } from '@radix-ui/react-icons';
 import { useSignAndExecuteTransaction, useSuiClient, useCurrentAccount } from '@mysten/dapp-kit';
 import { useState } from 'react';
 import { useNetworkVariable } from '../networkConfig';
@@ -11,7 +12,7 @@ export function CreateAllowlist() {
   const account = useCurrentAccount();
   const packageId = useNetworkVariable('packageId');
   const suiClient = useSuiClient();
-  
+
   const { mutate: signAndExecute } = useSignAndExecuteTransaction({
     execute: async ({ bytes, signature }) =>
       await suiClient.executeTransactionBlock({
@@ -29,14 +30,14 @@ export function CreateAllowlist() {
       alert('Please enter a name for the allowlist');
       return;
     }
-    
+
     if (!account?.address) {
       alert('Please connect your wallet first');
       return;
     }
-    
+
     const tx = new Transaction();
-    
+
     // First, create the allowlist and get the capability
     const [cap] = tx.moveCall({
       target: `${packageId}::allowlist::create_allowlist`,
@@ -44,7 +45,7 @@ export function CreateAllowlist() {
         tx.pure.string(name.trim()),
       ],
     });
-    
+
     // Then add the creator to their own allowlist
     tx.moveCall({
       target: `${packageId}::allowlist::add`,
@@ -53,12 +54,12 @@ export function CreateAllowlist() {
         tx.pure.address(account.address), // Creator's address
       ],
     });
-    
+
     // Transfer the capability to the creator
     tx.transferObjects([cap], account.address);
-    
+
     tx.setGasBudget(10000000);
-    
+
     signAndExecute(
       {
         transaction: tx,
@@ -66,12 +67,12 @@ export function CreateAllowlist() {
       {
         onSuccess: async (result) => {
           console.log('Allowlist created successfully', result);
-          
+
           // Find the created allowlist object (the one that's shared)
           const allowlistObject = result.effects?.created?.find(
             (item) => item.owner && typeof item.owner === 'object' && 'Shared' in item.owner,
           );
-          
+
           const createdObjectId = allowlistObject?.reference?.objectId;
           if (createdObjectId) {
             window.open(
@@ -97,12 +98,15 @@ export function CreateAllowlist() {
       <h2 style={{ marginBottom: '1rem' }}>Admin View: Create Allowlist</h2>
       <Flex direction="column" gap="3">
         <TextField.Root>
-          <TextField.Input 
-            placeholder="Allowlist Name" 
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+          <TextField.Slot>
+            <MagnifyingGlassIcon height="16" width="16" />
+          </TextField.Slot>
+          <input
+            className="w-full bg-transparent outline-none"
+            placeholder="Search the docs…"
           />
         </TextField.Root>
+
         <Flex gap="2">
           <Button
             onClick={() => createAllowlist(name)}
