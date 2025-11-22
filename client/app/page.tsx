@@ -9,6 +9,8 @@ import { useNetworkVariable } from "./networkConfig";
 import { generateFileHash, arrayBufferToBase64, base64ToArrayBuffer } from "./crypto";
 import { getSealClient, encryptBytes, decryptBytes, createSessionKey } from "./seal";
 import { SuiClient } from '@mysten/sui/client';
+import { ConnectButton, useCurrentAccount, useDisconnectWallet } from '@mysten/dapp-kit';
+import { Button } from '@radix-ui/themes';
 
 export default function Home() {
   const [versions, setVersions] = useState<Version[]>([]);
@@ -18,6 +20,11 @@ export default function Home() {
   const suiClient = new SuiClient({ url: 'https://fullnode.testnet.sui.io' });
   const [autoExpandId, setAutoExpandId] = useState<string | null>(null);
   const packageId = useNetworkVariable('packageId');
+  
+  // Wallet connection
+  const account = useCurrentAccount();
+  const { mutate: disconnect } = useDisconnectWallet();
+  const isConnected = !!account?.address;
 
   // Load persisted versions on first mount
   useEffect(() => {
@@ -42,25 +49,19 @@ export default function Home() {
   }, [versions]);
 
   const handleCommit = async (opts?: { epochs?: number; permanent?: boolean }) => {
+    if (!account?.address) {
+      alert('Please connect your wallet first');
+      return;
+    }
+    
+    if (!snapshotProviderRef.current) return;
+    const snap = snapshotProviderRef.current();
+    if (!snap) return;
+
+    let latestVersionId: string | null = null;
     try {
       setIsCommitting(true);
-      const snap = snapshotProviderRef.current?.();
-      let latestVersionId: string | null = null;
-      if (snap) {
-        const v: Version = {
-          id: crypto.randomUUID(),
-          createdAt: Date.now(),
-          text: snap.text,
-          media: snap.media,
-        };
-        setVersions((prev) => [...prev, v]);
-        // Keep reference to update with Walrus IDs post-upload
-        latestVersionId = v.id;
-      }
-      // Attempt real Walrus upload as a quilt using the public publisher HTTP API
-      // Requires images/audio/video to be accessible via object URLs -> we fetch to get Blob
       const publisher = process.env.NEXT_PUBLIC_WALRUS_PUBLISHER || "https://publisher.walrus-testnet.walrus.space";
-      if (!snap) throw new Error("Nothing to commit");
       const fd = new FormData();
       const metadata: Array<{ identifier: string; tags: Record<string, string> }> = [];
       // Add draft text as a file in the quilt (encrypted with Seal)
@@ -72,13 +73,14 @@ export default function Home() {
 
         // Encrypt the file
         const sealClient = getSealClient(suiClient);
-        const sessionKey = await createSessionKey(
+        const sessionKey = account?.address ? await createSessionKey(
           suiClient,
-          'YOUR_WALLET_ADDRESS', // Replace with actual wallet address
+          account.address,
           packageId,
-          'walrus',
+          'allowlist',
           60 // 1 hour TTL
-        );
+        ) : null;
+        if (!sessionKey) throw new Error('Failed to create session key');
 
         const { encrypted, id: encryptionId } = await encryptBytes(
           { data: new Uint8Array(await file.arrayBuffer()) },
@@ -127,9 +129,9 @@ export default function Home() {
           const sealClient = getSealClient(suiClient);
           const sessionKey = await createSessionKey(
             suiClient,
-            'YOUR_WALLET_ADDRESS', // Replace with 
+            account.address, // Use the connected wallet's address
             packageId,
-            'walrus',
+            'allowlist',
             60 // 1 hour TTL
           );
 
@@ -243,9 +245,23 @@ export default function Home() {
     }
   };
 
+  if (!isConnected) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900">
+        <div className="text-center p-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg">
+          <h1 className="text-2xl font-bold mb-4">Welcome to DraftsHub</h1>
+          <p className="mb-6">Connect your wallet to get started</p>
+          <div className="w-64 mx-auto">
+            <ConnectButton connectText="Connect Wallet" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <AppShell
-      topbar={<Topbar onCommit={handleCommit} isCommitting={isCommitting} />}
+      topbar={<Topbar onCommit={handleCommit} isCommitting={isCommitting} walletAddress={account?.address} onDisconnect={disconnect} />}
       sidebar={<Sidebar />}
       right={<RightPanel versions={versions} autoExpandVersionId={autoExpandId || undefined} />}
     >

@@ -1,7 +1,16 @@
 "use client";
 import React from "react";
+import { useCurrentAccount } from "@mysten/dapp-kit";
+import { Button } from "@radix-ui/themes";
 
-export function Topbar({ onCommit, isCommitting = false }: { onCommit?: (opts: { epochs?: number; permanent?: boolean }) => void; isCommitting?: boolean }) {
+type TopbarProps = {
+  onCommit?: (opts: { epochs?: number; permanent?: boolean }) => void;
+  isCommitting?: boolean;
+  walletAddress?: string;
+  onDisconnect?: () => void;
+};
+
+export function Topbar({ onCommit, isCommitting = false, walletAddress, onDisconnect }: TopbarProps) {
   const [open, setOpen] = React.useState(false);
   const [epochs, setEpochs] = React.useState<number | ''>("");
   const [permanent, setPermanent] = React.useState(true);
@@ -18,6 +27,22 @@ export function Topbar({ onCommit, isCommitting = false }: { onCommit?: (opts: {
           className="w-full rounded-md border border-black/10 bg-white/70 px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:border-black/20 dark:border-white/10 dark:bg-zinc-900/50 dark:focus:border-white/20"
         />
       </div>
+      
+      {walletAddress ? (
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-zinc-600 dark:text-zinc-300">
+            {`${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`}
+          </span>
+          <Button 
+            variant="soft" 
+            size="1" 
+            onClick={onDisconnect}
+            className="text-xs"
+          >
+            Disconnect
+          </Button>
+        </div>
+      ) : null}
       <div className="relative">
         <button
           type="button"
