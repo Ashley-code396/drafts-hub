@@ -119,7 +119,7 @@ const file = new File([blob], filename, { type: blob.type });
           const sealClient = getSealClient(suiClient);
           const sessionKey = await createSessionKey(
             suiClient,
-            'YOUR_WALLET_ADDRESS', // Replace with actual wallet address
+            'YOUR_WALLET_ADDRESS', // Replace with 
             packageId,
             'walrus',
             60 // 1 hour TTL

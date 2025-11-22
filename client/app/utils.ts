@@ -1,7 +1,8 @@
-import type { SuiClient } from '@mysten/sui/client';
+import type { SuiClient, SuiObjectResponse } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import type { SessionKey } from '@mysten/seal';
 import { fromHex } from '@mysten/sui/utils';
+import { decryptBytes } from './seal';
 
 export type MoveCallConstructor = (tx: Transaction, id: string) => void;
 
@@ -22,49 +23,85 @@ export async function downloadAndDecrypt(
   blobIds: string[],
   sessionKey: SessionKey,
   suiClient: SuiClient,
-  sealClient: any, // Using 'any' since we don't have the exact type
+  sealClient: any,
   moveCallConstructor: MoveCallConstructor,
   setError: (error: string | null) => void,
   setDecryptedFileUrls: (urls: string[]) => void,
   setIsDialogOpen: (open: boolean) => void,
-  setReloadKey: (key: number) => void
+  setReloadKey: (value: number | ((prev: number) => number)) => void
 ): Promise<void> {
   try {
     const decryptedFiles: string[] = [];
-    
+
     for (const blobId of blobIds) {
       try {
-        // 1. Get the encrypted blob
         const blob = await suiClient.getObject({
           id: blobId,
           options: { showBcs: true },
-        });
+        }) as SuiObjectResponse & {
+          data: { bcs?: { bcsBytes: Uint8Array } };
+        };
 
         if (!blob.data?.bcs?.bcsBytes) {
           throw new Error(`No data found for blob ${blobId}`);
         }
 
-        // 2. Decrypt the blob using the session key
-        const decrypted = await sessionKey.decrypt(blob.data.bcs.bcsBytes);
-        
-        // 3. Create a URL for the decrypted blob
-        const blobUrl = URL.createObjectURL(new Blob([decrypted]));
-        decryptedFiles.push(blobUrl);
-        
-      } catch (error) {
-        console.error(`Error processing blob ${blobId}:`, error);
-        setError(`Failed to process file: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        return;
-      }
-    }
+        const decrypted = await decryptBytes(
+          {
+            encryptedData: blob.data.bcs.bcsBytes,
+            sessionKey,
+            txBytes: new Uint8Array(),
+            threshold: 1,
+          },
+          suiClient
+        );
 
-    // 4. Update state with decrypted files
-    setDecryptedFileUrls(decryptedFiles);
-    setIsDialogOpen(true);
-    setReloadKey(prev => prev + 1);
-    
-  } catch (error) {
-    console.error('Error in downloadAndDecrypt:', error);
-    setError(`Decryption failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        let decryptedData: Uint8Array;
+
+        if (typeof decrypted === "string") {
+          decryptedData = new TextEncoder().encode(decrypted);
+        } else if (decrypted instanceof ArrayBuffer) {
+          decryptedData = new Uint8Array(decrypted);
+        } else if ("buffer" in decrypted) {
+          decryptedData = new Uint8Array(
+            decrypted.buffer,
+            decrypted.byteOffset ?? 0,
+            decrypted.byteLength
+          );
+        } else if (decrypted && typeof decrypted === 'object' && 'byteLength' in decrypted) {
+          // This is a more type-safe way to check for ArrayBuffer-like objects
+          decryptedData = new Uint8Array(decrypted as ArrayBuffer);
+        } else {
+          throw new Error("Unsupported decrypted data type");
+        }
+
+      const buffer = decryptedData.buffer.slice(
+        decryptedData.byteOffset,
+        decryptedData.byteOffset + decryptedData.byteLength
+      );
+
+      const decryptedBlob = new Blob([buffer as ArrayBuffer], {
+        type: "application/octet-stream",
+      });
+
+      const blobUrl = URL.createObjectURL(decryptedBlob);
+      decryptedFiles.push(blobUrl);
+
+    } catch (error) {
+      console.error(`Error processing blob ${blobId}:`, error);
+      setError(`Failed to process file: ${error instanceof Error ? error.message : "Unknown error"
+        }`);
+      return;
+    }
   }
+
+    setDecryptedFileUrls(decryptedFiles);
+  setIsDialogOpen(true);
+  setReloadKey(prev => prev + 1);
+
+} catch (error) {
+  console.error("Error in downloadAndDecrypt:", error);
+  setError(`Decryption failed: ${error instanceof Error ? error.message : "Unknown error"
+    }`);
+}
 }
