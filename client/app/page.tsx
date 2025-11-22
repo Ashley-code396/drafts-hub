@@ -29,7 +29,7 @@ export default function Home() {
           setVersions(parsed as Version[]);
         }
       }
-    } catch {}
+    } catch { }
   }, []);
 
   // Persist versions on change
@@ -38,7 +38,7 @@ export default function Home() {
       if (typeof window !== "undefined") {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(versions));
       }
-    } catch {}
+    } catch { }
   }, [versions]);
 
   const handleCommit = async (opts?: { epochs?: number; permanent?: boolean }) => {
@@ -69,7 +69,7 @@ export default function Home() {
         const blob = new Blob([raw], { type: "text/plain" });
         const file = new File([blob], "draft.txt");
         const fileHash = await generateFileHash(file);
-        
+
         // Encrypt the file
         const sealClient = getSealClient(suiClient);
         const sessionKey = await createSessionKey(
@@ -79,15 +79,23 @@ export default function Home() {
           'walrus',
           60 // 1 hour TTL
         );
-        
+
         const { encrypted, id: encryptionId } = await encryptBytes(
           { data: new Uint8Array(await file.arrayBuffer()) },
           suiClient
         );
-        
-        const encryptedBlob = new Blob([encrypted], { type: 'application/octet-stream' });
+        // Normalize Uint8Array<ArrayBufferLike> → Uint8Array<ArrayBuffer>
+        const normalizedEncrypted = new Uint8Array(encrypted);
+
+        // OR safer:
+        // const normalizedEncrypted = new Uint8Array(encrypted.buffer.slice(0));
+
+        const encryptedBlob = new Blob([normalizedEncrypted], {
+          type: 'application/octet-stream',
+        });
+
         const encryptedFileName = `draft.txt.enc`;
-        
+
         fd.append(encryptedFileName, encryptedBlob, encryptedFileName);
         metadata.push({
           identifier: encryptedFileName,
@@ -112,9 +120,9 @@ export default function Home() {
           const ext = blob.type.startsWith("image/") ? (blob.type.split("/")[1] || "img") : blob.type.startsWith("video/") ? (blob.type.split("/")[1] || "mp4") : blob.type.startsWith("audio/") ? (blob.type.split("/")[1] || "mp3") : "bin";
           const base = m.title?.replace(/[^a-z0-9-_]/gi, "_") || `${m.type}-${counter}`;
           const filename = `${base || m.type}-${counter}.${ext}`;
-const file = new File([blob], filename, { type: blob.type });
+          const file = new File([blob], filename, { type: blob.type });
           const fileHash = await generateFileHash(file);
-          
+
           // Encrypt the media file
           const sealClient = getSealClient(suiClient);
           const sessionKey = await createSessionKey(
@@ -124,15 +132,23 @@ const file = new File([blob], filename, { type: blob.type });
             'walrus',
             60 // 1 hour TTL
           );
-          
+
           const { encrypted, id: encryptionId } = await encryptBytes(
             { data: new Uint8Array(await file.arrayBuffer()) },
             suiClient
           );
-          
-          const encryptedBlob = new Blob([encrypted], { type: 'application/octet-stream' });
+          // Normalize Uint8Array<ArrayBufferLike> → Uint8Array<ArrayBuffer>
+          const normalizedEncrypted = new Uint8Array(encrypted);
+
+          // OR safer:
+          // const normalizedEncrypted = new Uint8Array(encrypted.buffer.slice(0));
+
+          const encryptedBlob = new Blob([normalizedEncrypted], {
+            type: 'application/octet-stream',
+          });
+
           const encryptedFileName = `${filename}.enc`;
-          
+
           fd.append(encryptedFileName, encryptedBlob, encryptedFileName);
           metadata.push({
             identifier: encryptedFileName,
@@ -180,7 +196,7 @@ const file = new File([blob], filename, { type: blob.type });
             const t = await walrusRes.text();
             msg += `\n${t}`;
           }
-        } catch {}
+        } catch { }
         // Optional dev fallback via env flag
         if (process.env.NEXT_PUBLIC_WALRUS_FALLBACK === "1") {
           const stub = await fetch("/api/commit", { method: "POST" }).then((r) => r.json());
@@ -206,12 +222,12 @@ const file = new File([blob], filename, { type: blob.type });
             prev.map((ver) =>
               ver.id === latestVersionId
                 ? {
-                    ...ver,
-                    quiltId: quiltId || ver.quiltId,
-                    patches: Array.isArray(patchesArr) ? patchesArr : ver.patches,
-                    permanent: permanentFlag ?? ver.permanent,
-                    epochs: typeof epochsCount === 'number' ? epochsCount : ver.epochs,
-                  }
+                  ...ver,
+                  quiltId: quiltId || ver.quiltId,
+                  patches: Array.isArray(patchesArr) ? patchesArr : ver.patches,
+                  permanent: permanentFlag ?? ver.permanent,
+                  epochs: typeof epochsCount === 'number' ? epochsCount : ver.epochs,
+                }
                 : ver
             )
           );
