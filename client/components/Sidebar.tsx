@@ -2,7 +2,14 @@
 import React from "react";
 import { CreateAllowlist } from "../app/allowlist/CreateAllowlist";
 
-export function Sidebar() {
+interface SidebarProps {
+  versions: any[]; // Replace 'any' with your Version type if you have it
+  onVersionSelect: (versionId: string) => void;
+  onVersionDelete: (versionId: string) => void;
+  autoExpandId: string | null;
+}
+
+export function Sidebar({ versions, onVersionSelect, onVersionDelete, autoExpandId }: SidebarProps) {
   return (
     <div className="flex h-full flex-col">
       <div className="p-3">

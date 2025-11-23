@@ -1,36 +1,29 @@
 "use client";
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useMemo, useCallback } from "react";
 import { AppShell } from "../components/AppShell";
 import { Topbar } from "../components/Topbar";
 import { Sidebar } from "../components/Sidebar";
 import { EditorCanvas } from "../components/EditorCanvas";
 import { RightPanel, type Version } from "../components/RightPanel";
 import { useNetworkVariables } from "./networkConfig";
-import { generateFileHash, arrayBufferToBase64, base64ToArrayBuffer } from "./crypto";
-import { getSealClient, encryptBytes, decryptBytes, createSessionKey } from "./seal";
+import { generateFileHash } from "./crypto";
+import { encryptBytes } from "./seal";
 import { SuiClient } from '@mysten/sui/client';
 import { ConnectButton, useCurrentAccount, useDisconnectWallet } from '@mysten/dapp-kit';
-import { Button } from '@radix-ui/themes';
 
 export default function Home() {
+  // Wallet connection
+  const account = useCurrentAccount();
+  const { mutate: disconnect } = useDisconnectWallet();
+  const isConnected = !!account?.address;
+  
   const [versions, setVersions] = useState<Version[]>([]);
   const snapshotProviderRef = useRef<null | (() => { text: string; doc: any; media: { type: string; src: string; title?: string }[] })>(null);
   const [isCommitting, setIsCommitting] = useState(false);
   const STORAGE_KEY = "draftshub_versions_v1";
-  const suiClient = new SuiClient({ url: 'https://fullnode.testnet.sui.io' });
+  const suiClient = useMemo(() => new SuiClient({ url: 'https://fullnode.testnet.sui.io' }), []);
   const [autoExpandId, setAutoExpandId] = useState<string | null>(null);
-  
-  // Get all network variables at once
-  const { packageId } = useNetworkVariables();
-  
-  // Add loading state and error handling
-  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
-  // Wallet connection with auto-connect
-  const account = useCurrentAccount();
-  const { mutate: disconnect } = useDisconnectWallet();
-  const isConnected = !!account?.address;
   
   // Auto-connect wallet if previously connected
   useEffect(() => {
@@ -64,280 +57,203 @@ export default function Home() {
     } catch { }
   }, [versions]);
 
-  const handleCommit = async (opts?: { epochs?: number; permanent?: boolean }) => {
+  const handleCommit = useCallback(async (opts?: { epochs?: number; permanent?: boolean }) => {
     if (!account?.address) {
-      alert('Please connect your wallet first');
+      setError('Please connect your wallet first');
       return;
     }
     
     if (!snapshotProviderRef.current) {
-      console.error('No snapshot provider available');
+      setError('No snapshot provider available');
       return;
     }
-    
+
     const snap = snapshotProviderRef.current();
     if (!snap) {
-      console.error('Failed to create snapshot');
-      return;
-    }
-    
-    // Validate wallet connection
-    try {
-      const walletState = await suiClient.getObject({
-        id: account.address,
-        options: { showContent: true }
-      });
-      
-      if (walletState.error) {
-        throw new Error('Failed to verify wallet state');
-      }
-    } catch (error) {
-      console.error('Error verifying wallet state:', error);
-      alert('Failed to verify wallet state. Please reconnect your wallet and try again.');
+      setError('Failed to create document snapshot');
       return;
     }
 
-    let latestVersionId: string | null = null;
+    setIsCommitting(true);
+    setError(null);
+
     try {
-      setIsCommitting(true);
-      const publisher = process.env.NEXT_PUBLIC_WALRUS_PUBLISHER || "https://publisher.walrus-testnet.walrus.space";
       const fd = new FormData();
       const metadata: Array<{ identifier: string; tags: Record<string, string> }> = [];
-      // Add draft text as a file in the quilt (encrypted with Seal)
-      {
-        const raw = new TextEncoder().encode(snap.text || "");
-        const blob = new Blob([raw], { type: "text/plain" });
-        const file = new File([blob], "draft.txt");
-        const fileHash = await generateFileHash(file);
-
-        // Encrypt the file with SEAL
-        const fileContent = await file.arrayBuffer();
-        const fileBytes = new Uint8Array(fileContent);
-        
-        // Encrypt the file data
-        const { encrypted, id: encryptionId } = await encryptBytes(
-          { data: fileBytes },
-          suiClient
-        );
-        
-        // Convert to a format that can be used in Blob
-        const encryptedArray = Array.from(encrypted);
-        const encryptedUint8 = new Uint8Array(encryptedArray);
-        
-        // Create a blob from the encrypted data
-        const encryptedBlob = new Blob([encryptedUint8], {
-          type: 'application/octet-stream',
-        });
-
-        // Generate a unique filename with original extension
-        const fileExt = file.name.split('.').pop() || 'bin';
-        const encryptedFileName = `draft_${Date.now()}.${fileExt}.enc`;
-
-        // Add the encrypted file to the form data
-        fd.append(encryptedFileName, encryptedBlob, encryptedFileName);
-        
-        // Add metadata with encryption details
-        metadata.push({
-          identifier: encryptedFileName,
-          tags: {
-            type: "seal-encrypted",
-            mime: file.type || 'application/octet-stream',
-            createdAt: new Date().toISOString(),
-            permanent: String(opts?.permanent ?? true),
-            epochs: String(opts?.epochs ?? 1),
-            fileHash: fileHash,
-            encryptionId: encryptionId,
-            isEncrypted: "true",
-            originalName: file.name,
-            originalMime: file.type || 'application/octet-stream',
-            encryptionMethod: 'seal',
-            encryptionTimestamp: String(Date.now())
-          }
-        });
-      }
-      // Attach media files
-      let counter = 0;
-      for (const m of snap.media) {
+      
+      // Handle text content
+      const rawText = new TextEncoder().encode(snap.text || "");
+      const textBlob = new Blob([rawText], { type: "text/plain" });
+      const textFile = new File([textBlob], "draft.txt");
+      const textHash = await generateFileHash(textFile);
+      
+      // Encrypt the text content
+      const { encrypted: encryptedText, id: textEncryptionId } = await encryptBytes(
+        { data: rawText },
+        suiClient
+      );
+      
+      // Convert Uint8Array to ArrayBuffer for Blob
+      const encryptedTextArray = new Uint8Array(encryptedText);
+      const encryptedTextBlob = new Blob([encryptedTextArray], {
+        type: 'application/octet-stream',
+      });
+      
+      const encryptedTextName = `draft_${Date.now()}.txt.enc`;
+      fd.append(encryptedTextName, encryptedTextBlob, encryptedTextName);
+      
+      metadata.push({
+        identifier: encryptedTextName,
+        tags: {
+          type: "seal-encrypted",
+          mime: 'text/plain',
+          createdAt: new Date().toISOString(),
+          permanent: String(opts?.permanent ?? true),
+          epochs: String(opts?.epochs ?? 1),
+          fileHash: textHash,
+          encryptionId: textEncryptionId,
+          isEncrypted: "true",
+          originalName: "draft.txt",
+          originalMime: 'text/plain',
+          encryptionMethod: 'seal',
+          encryptionTimestamp: String(Date.now())
+        }
+      });
+      
+      // Handle media files
+      for (const [index, media] of snap.media.entries()) {
         try {
-          const blob = await fetch(m.src).then((r) => r.blob());
-          const ext = blob.type.startsWith("image/") ? (blob.type.split("/")[1] || "img") : blob.type.startsWith("video/") ? (blob.type.split("/")[1] || "mp4") : blob.type.startsWith("audio/") ? (blob.type.split("/")[1] || "mp3") : "bin";
-          const base = m.title?.replace(/[^a-z0-9-_]/gi, "_") || `${m.type}-${counter}`;
-          const filename = `${base || m.type}-${counter}.${ext}`;
-          const file = new File([blob], filename, { type: blob.type });
+          const response = await fetch(media.src);
+          if (!response.ok) throw new Error(`Failed to fetch media: ${response.statusText}`);
+          
+          const blob = await response.blob();
+          const fileExt = media.src.split('.').pop() || 'bin';
+          const fileName = media.title ? 
+            `${media.title.replace(/[^\w.-]/g, '_')}.${fileExt}` : 
+            `media_${Date.now()}_${index}.${fileExt}`;
+            
+          const file = new File([blob], fileName, { type: blob.type });
           const fileHash = await generateFileHash(file);
-
+          
           // Encrypt the media file
-          const sealClient = getSealClient(suiClient);
-          const sessionKey = await createSessionKey(
-            suiClient,
-            account.address, // Use the connected wallet's address
-            '0x13a96d795782e9237e266594a39399f4d2c5d87493062e31c9f56373a3bc4c75', // Hardcoded package ID from constants.ts
-            30 // 30 minutes TTL (max allowed)
-          );
-
-          const { encrypted, id: encryptionId } = await encryptBytes(
-            { data: new Uint8Array(await file.arrayBuffer()) },
+          const fileContent = await file.arrayBuffer();
+          const fileBytes = new Uint8Array(fileContent);
+          
+          const { encrypted, id: mediaEncryptionId } = await encryptBytes(
+            { data: fileBytes },
             suiClient
           );
-          // Normalize Uint8Array<ArrayBufferLike> → Uint8Array<ArrayBuffer>
-          const normalizedEncrypted = new Uint8Array(encrypted);
-
-          // OR safer:
-          // const normalizedEncrypted = new Uint8Array(encrypted.buffer.slice(0));
-
-          const encryptedBlob = new Blob([normalizedEncrypted], {
+          
+          // Convert Uint8Array to ArrayBuffer for Blob
+          const encryptedArray = new Uint8Array(encrypted);
+          const encryptedBlob = new Blob([encryptedArray], {
             type: 'application/octet-stream',
           });
-
-          const encryptedFileName = `${filename}.enc`;
-
+          
+          const encryptedFileName = `${fileName}.enc`;
+          
           fd.append(encryptedFileName, encryptedBlob, encryptedFileName);
+          
           metadata.push({
             identifier: encryptedFileName,
             tags: {
-              type: m.type,
+              type: media.type,
               mime: 'application/octet-stream',
-              createdAt: String(Date.now()),
+              createdAt: new Date().toISOString(),
               permanent: String(opts?.permanent ?? true),
               epochs: String(opts?.epochs ?? 1),
               fileHash: fileHash,
-              encryptionId: encryptionId,
+              encryptionId: mediaEncryptionId,
               isEncrypted: "true",
-              originalName: filename,
-              originalMime: blob.type
-            },
+              originalName: fileName,
+              originalMime: blob.type,
+              encryptionMethod: 'seal',
+              encryptionTimestamp: String(Date.now())
+            }
           });
-          counter += 1;
-        } catch {
-          // skip any media that can't be fetched
+        } catch (error) {
+          console.error('Error processing media file:', error);
+          // Continue with other files even if one fails
         }
       }
-      // Attach Walrus-native metadata JSON under reserved field name `_metadata`
-      // Must be a JSON sequence (array) per Walrus schema
+      
+      // Add metadata
       fd.append(
         "_metadata",
         new Blob([JSON.stringify(metadata, null, 2)], { type: "application/json" }),
         "_metadata"
       );
-      // Build query params from user commit options
-      const qsObj: Record<string, string> = {
+      
+      // Build query params
+      const qs = new URLSearchParams({
         epochs: String(opts?.epochs ?? 1),
         permanent: String(opts?.permanent ?? true),
-      };
-      const qs = new URLSearchParams(qsObj).toString();
-      // Add retry logic for the request
-      const maxRetries = 3;
-      let retryCount = 0;
-      let walrusRes;
+      }).toString();
       
-      while (retryCount < maxRetries) {
-        try {
-          walrusRes = await fetch(`/api/walrus/quilts${qs ? `?${qs}` : ""}`, { 
-            method: "PUT", 
-            body: fd,
-            headers: {
-              'X-Wallet-Address': account.address,
-              'X-Retry-Attempt': retryCount.toString()
-            }
-          });
-          
-          if (walrusRes.ok) break;
-          
-          // If we get a 404, it might be a temporary issue
-          if (walrusRes.status === 404 && retryCount < maxRetries - 1) {
-            console.log(`Attempt ${retryCount + 1} failed, retrying...`);
-            retryCount++;
-            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
-            continue;
-          }
-          
-          break;
-        } catch (error) {
-          console.error('Error during commit attempt:', error);
-          if (retryCount === maxRetries - 1) throw error;
-          retryCount++;
-          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+      // Make the API call to Walrus
+      const response = await fetch(`/api/walrus/quilts${qs ? `?${qs}` : ""}`, {
+        method: "PUT",
+        body: fd,
+        headers: {
+          'X-Wallet-Address': account.address,
         }
+      });
+      
+      if (!response.ok) {
+        const error = await response.text().catch(() => 'Unknown error');
+        throw new Error(`Failed to commit draft: ${error}`);
       }
       
-      if (!walrusRes) {
-        throw new Error('No response received from the server after multiple retries');
+      const result = await response.json();
+      const quiltId = result?.blobStoreResult?.newlyCreated?.blobObject?.blobId || 
+                     result?.alreadyCertified?.blobId || 
+                     result?.blobId || 
+                     result?.quiltId;
+      
+      if (quiltId) {
+        const newVersion: Version = {
+          id: `v${Date.now()}`,
+          createdAt: Date.now(),
+          quiltId,
+          text: snap.text,
+          media: snap.media,
+          patches: [],
+          permanent: opts?.permanent ?? true,
+          epochs: opts?.epochs ?? 1
+        };
+        
+        setVersions(prev => [newVersion, ...prev]);
+        setAutoExpandId(newVersion.id);
+        return { success: true, quiltId };
       }
       
-      if (!walrusRes.ok) {
-        // Prefer surfacing real Walrus errors to avoid fake IDs
-        let msg = `Walrus error ${walrusRes.status}`;
-        try {
-          const ct = walrusRes.headers.get("content-type") || "";
-          if (ct.includes("application/json")) {
-            try {
-              const j = await walrusRes.clone().json();
-              msg += `\n${JSON.stringify(j, null, 2)}`;
-            } catch (jsonError) {
-              console.error('Error parsing JSON response:', jsonError);
-              const text = await walrusRes.text();
-              msg += `\nResponse: ${text}`;
-            }
-          } else {
-            const t = await walrusRes.text();
-            msg += `\n${t}`;
-          }
-        } catch { }
-        // Optional dev fallback via env flag
-        if (process.env.NEXT_PUBLIC_WALRUS_FALLBACK === "1") {
-          const stub = await fetch("/api/commit", { method: "POST" }).then((r) => r.json());
-          alert(`Committed (stub fallback)\nCID: ${stub.cid}\nHash: ${stub.hash}`);
-        } else {
-          throw new Error(msg);
-        }
-      } else {
-        const out = await walrusRes.json();
-        const quiltId = out?.blobStoreResult?.newlyCreated?.blobObject?.blobId || out?.alreadyCertified?.blobId || out?.blobId || out?.quiltId;
-        const deletable = (out?.blobStoreResult?.newlyCreated?.blobObject?.deletable ?? out?.alreadyCertified?.deletable) as boolean | undefined;
-        const permanentFlag = deletable === false;
-        const startEpoch = out?.blobStoreResult?.newlyCreated?.blobObject?.storage?.startEpoch;
-        const endEpoch = out?.blobStoreResult?.newlyCreated?.blobObject?.storage?.endEpoch;
-        const epochsFromStorage = typeof startEpoch === 'number' && typeof endEpoch === 'number' ? Math.max(0, endEpoch - startEpoch) : undefined;
-        const epochsFromOp = out?.blobStoreResult?.newlyCreated?.resourceOperation?.registerFromScratch?.epochsAhead;
-        const epochsCount = (typeof opts?.epochs === 'number' ? opts?.epochs : undefined) ?? (typeof epochsFromOp === 'number' ? epochsFromOp : undefined) ?? epochsFromStorage;
-        const patchesArr: Array<{ identifier: string; quiltPatchId: string }> = Array.isArray(out?.storedQuiltBlobs)
-          ? out.storedQuiltBlobs.map((b: any) => ({ identifier: b.identifier || b.name || "", quiltPatchId: b.quiltPatchId || b.patchId || b.blobId || "" }))
-          : (Array.isArray(out?.patches) ? out.patches : []);
-        if (latestVersionId && (quiltId || patchesArr.length)) {
-          setVersions((prev) =>
-            prev.map((ver) =>
-              ver.id === latestVersionId
-                ? {
-                  ...ver,
-                  quiltId: quiltId || ver.quiltId,
-                  patches: Array.isArray(patchesArr) ? patchesArr : ver.patches,
-                  permanent: permanentFlag ?? ver.permanent,
-                  epochs: typeof epochsCount === 'number' ? epochsCount : ver.epochs,
-                }
-                : ver
-            )
-          );
-          setAutoExpandId(latestVersionId);
-        }
-        alert(`Committed to Walrus\nQuilt ID: ${quiltId || "(see console)"}\n${patchesArr.length ? `Patches:\n${patchesArr.map((p) => `${p.identifier}: ${p.quiltPatchId}`).join("\n")}` : ""}`);
-        console.log("Walrus response", out);
-      }
-    } catch (e: any) {
-      alert(e?.message || "Commit failed");
+      return { success: false, error: 'No quilt ID returned' };
+    } catch (error) {
+      console.error('Commit error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to commit draft';
+      setError(errorMessage);
+      return { success: false, error: errorMessage };
     } finally {
       setIsCommitting(false);
     }
+  }, [account?.address, suiClient]);
+
+  const handleVersionSelect = (versionId: string) => {
+    // Implementation for version selection
+    console.log('Selected version:', versionId);
   };
 
-  if (!isConnected) {
+  const handleVersionDelete = (versionId: string) => {
+    setVersions(prev => prev.filter(v => v.id !== versionId));
+  };
+
+  if (!account) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900">
         <div className="text-center p-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg">
           <h1 className="text-2xl font-bold mb-4">Welcome to DraftsHub</h1>
           <p className="mb-6">Connect your wallet to get started</p>
-          <div className="w-64 mx-auto">
-            <ConnectButton connectText="Connect Wallet" />
-          </div>
+          <ConnectButton />
         </div>
       </div>
     );
@@ -345,10 +261,42 @@ export default function Home() {
 
   return (
     <AppShell
-      topbar={<Topbar onCommit={handleCommit} isCommitting={isCommitting} walletAddress={account?.address} onDisconnect={disconnect} />}
-      sidebar={<Sidebar />}
-      right={<RightPanel versions={versions} autoExpandVersionId={autoExpandId || undefined} />}
+      topbar={
+        <Topbar 
+          onCommit={handleCommit} 
+          isCommitting={isCommitting} 
+          walletAddress={account.address} 
+          onDisconnect={disconnect} 
+        />
+      }
+      sidebar={
+        <Sidebar 
+          versions={versions} 
+          onVersionSelect={handleVersionSelect}
+          onVersionDelete={handleVersionDelete}
+          autoExpandId={autoExpandId}
+        />
+      }
+      right={
+        <RightPanel 
+          versions={versions} 
+          onVersionSelect={handleVersionSelect}
+          onVersionDelete={handleVersionDelete}
+          autoExpandVersionId={autoExpandId || undefined} 
+        />
+      }
     >
+      {error && (
+        <div className="fixed top-20 right-4 z-50 p-4 bg-red-100 border border-red-400 text-red-700 rounded">
+          {error}
+          <button 
+            onClick={() => setError(null)}
+            className="ml-4 text-red-700 hover:text-red-900"
+          >
+            ×
+          </button>
+        </div>
+      )}
       <EditorCanvas
         registerSnapshotProvider={(fn) => {
           snapshotProviderRef.current = fn;

@@ -26,7 +26,17 @@ function diffSnippet(prev: string, curr: string) {
   return { before: before.slice(0, 220), after: after.slice(0, 220) };
 }
 
-export function RightPanel({ versions, autoExpandVersionId }: { versions: Version[]; autoExpandVersionId?: string }) {
+export function RightPanel({ 
+  versions, 
+  autoExpandVersionId, 
+  onVersionSelect, 
+  onVersionDelete 
+}: { 
+  versions: Version[]; 
+  autoExpandVersionId?: string;
+  onVersionSelect: (versionId: string) => void;
+  onVersionDelete: (versionId: string) => void;
+}) {
   const sorted = [...versions].sort((a, b) => b.createdAt - a.createdAt);
   const AGG = process.env.NEXT_PUBLIC_WALRUS_AGGREGATOR || "https://aggregator.walrus-testnet.walrus.space";
   const [expanded, setExpanded] = React.useState<string | null>(null);

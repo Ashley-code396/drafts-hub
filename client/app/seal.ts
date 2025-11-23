@@ -75,18 +75,26 @@ export async function encryptBytes(
   const id = options.id || toHex(crypto.getRandomValues(new Uint8Array(32)));
   const threshold = options.threshold || 2;
   
-  const { encryptedObject, key } = await seal.encrypt({
-    threshold,
-    id,
-    data: options.data,
-    packageId: '0x0', // Dummy package ID, not actually used
-  });
-  
-  return { 
-    encrypted: encryptedObject, 
-    id,
-    key 
-  };
+  try {
+    // Import the package ID from constants
+    const { TESTNET_PACKAGE_ID } = await import('./constants');
+    
+    const { encryptedObject, key } = await seal.encrypt({
+      threshold,
+      id,
+      data: options.data,
+      packageId: TESTNET_PACKAGE_ID,
+    });
+    
+    return { 
+      encrypted: encryptedObject, 
+      id,
+      key 
+    };
+  } catch (error) {
+    console.error('Encryption failed:', error);
+    throw new Error(`Failed to encrypt data: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export interface DecryptOptions {
