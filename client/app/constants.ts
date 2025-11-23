@@ -1,4 +1,1 @@
-// Copyright (c), Mysten Labs, Inc.
-// SPDX-License-Identifier: Apache-2.0
 export const TESTNET_PACKAGE_ID ='0x13a96d795782e9237e266594a39399f4d2c5d87493062e31c9f56373a3bc4c75';
-export const TESTNET_MVR_NAME ='0xTODO';

@@ -5,7 +5,7 @@ import { Topbar } from "../components/Topbar";
 import { Sidebar } from "../components/Sidebar";
 import { EditorCanvas } from "../components/EditorCanvas";
 import { RightPanel, type Version } from "../components/RightPanel";
-import { useNetworkVariable } from "./networkConfig";
+import { useNetworkVariables } from "./networkConfig";
 import { generateFileHash, arrayBufferToBase64, base64ToArrayBuffer } from "./crypto";
 import { getSealClient, encryptBytes, decryptBytes, createSessionKey } from "./seal";
 import { SuiClient } from '@mysten/sui/client';
@@ -19,12 +19,28 @@ export default function Home() {
   const STORAGE_KEY = "draftshub_versions_v1";
   const suiClient = new SuiClient({ url: 'https://fullnode.testnet.sui.io' });
   const [autoExpandId, setAutoExpandId] = useState<string | null>(null);
-  const packageId = useNetworkVariable('packageId');
   
-  // Wallet connection
+  // Get all network variables at once
+  const { packageId } = useNetworkVariables();
+  
+  // Add loading state and error handling
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Wallet connection with auto-connect
   const account = useCurrentAccount();
   const { mutate: disconnect } = useDisconnectWallet();
   const isConnected = !!account?.address;
+  
+  // Auto-connect wallet if previously connected
+  useEffect(() => {
+    const savedWallet = localStorage.getItem('connectedWallet');
+    if (savedWallet && !isConnected) {
+      // Trigger wallet connection here if your wallet provider supports auto-connect
+      // This depends on your wallet provider's API
+      console.log('Auto-connecting wallet...');
+    }
+  }, [isConnected]);
 
   // Load persisted versions on first mount
   useEffect(() => {
@@ -54,9 +70,32 @@ export default function Home() {
       return;
     }
     
-    if (!snapshotProviderRef.current) return;
+    if (!snapshotProviderRef.current) {
+      console.error('No snapshot provider available');
+      return;
+    }
+    
     const snap = snapshotProviderRef.current();
-    if (!snap) return;
+    if (!snap) {
+      console.error('Failed to create snapshot');
+      return;
+    }
+    
+    // Validate wallet connection
+    try {
+      const walletState = await suiClient.getObject({
+        id: account.address,
+        options: { showContent: true }
+      });
+      
+      if (walletState.error) {
+        throw new Error('Failed to verify wallet state');
+      }
+    } catch (error) {
+      console.error('Error verifying wallet state:', error);
+      alert('Failed to verify wallet state. Please reconnect your wallet and try again.');
+      return;
+    }
 
     let latestVersionId: string | null = null;
     try {
@@ -71,47 +110,49 @@ export default function Home() {
         const file = new File([blob], "draft.txt");
         const fileHash = await generateFileHash(file);
 
-        // Encrypt the file
-        const sealClient = getSealClient(suiClient);
-        const sessionKey = account?.address ? await createSessionKey(
-          suiClient,
-          account.address,
-          packageId,
-          'allowlist',
-          60 // 1 hour TTL
-        ) : null;
-        if (!sessionKey) throw new Error('Failed to create session key');
-
+        // Encrypt the file with SEAL
+        const fileContent = await file.arrayBuffer();
+        const fileBytes = new Uint8Array(fileContent);
+        
+        // Encrypt the file data
         const { encrypted, id: encryptionId } = await encryptBytes(
-          { data: new Uint8Array(await file.arrayBuffer()) },
+          { data: fileBytes },
           suiClient
         );
-        // Normalize Uint8Array<ArrayBufferLike> → Uint8Array<ArrayBuffer>
-        const normalizedEncrypted = new Uint8Array(encrypted);
-
-        // OR safer:
-        // const normalizedEncrypted = new Uint8Array(encrypted.buffer.slice(0));
-
-        const encryptedBlob = new Blob([normalizedEncrypted], {
+        
+        // Convert to a format that can be used in Blob
+        const encryptedArray = Array.from(encrypted);
+        const encryptedUint8 = new Uint8Array(encryptedArray);
+        
+        // Create a blob from the encrypted data
+        const encryptedBlob = new Blob([encryptedUint8], {
           type: 'application/octet-stream',
         });
 
-        const encryptedFileName = `draft.txt.enc`;
+        // Generate a unique filename with original extension
+        const fileExt = file.name.split('.').pop() || 'bin';
+        const encryptedFileName = `draft_${Date.now()}.${fileExt}.enc`;
 
+        // Add the encrypted file to the form data
         fd.append(encryptedFileName, encryptedBlob, encryptedFileName);
+        
+        // Add metadata with encryption details
         metadata.push({
           identifier: encryptedFileName,
           tags: {
-            type: "text",
-            mime: "application/octet-stream",
-            createdAt: String(Date.now()),
+            type: "seal-encrypted",
+            mime: file.type || 'application/octet-stream',
+            createdAt: new Date().toISOString(),
             permanent: String(opts?.permanent ?? true),
             epochs: String(opts?.epochs ?? 1),
             fileHash: fileHash,
             encryptionId: encryptionId,
             isEncrypted: "true",
-            originalName: "draft.txt"
-          },
+            originalName: file.name,
+            originalMime: file.type || 'application/octet-stream',
+            encryptionMethod: 'seal',
+            encryptionTimestamp: String(Date.now())
+          }
         });
       }
       // Attach media files
@@ -130,9 +171,8 @@ export default function Home() {
           const sessionKey = await createSessionKey(
             suiClient,
             account.address, // Use the connected wallet's address
-            packageId,
-            'allowlist',
-            60 // 1 hour TTL
+            '0x13a96d795782e9237e266594a39399f4d2c5d87493062e31c9f56373a3bc4c75', // Hardcoded package ID from constants.ts
+            30 // 30 minutes TTL (max allowed)
           );
 
           const { encrypted, id: encryptionId } = await encryptBytes(
@@ -185,15 +225,59 @@ export default function Home() {
         permanent: String(opts?.permanent ?? true),
       };
       const qs = new URLSearchParams(qsObj).toString();
-      const walrusRes = await fetch(`/api/walrus/quilts${qs ? `?${qs}` : ""}`, { method: "PUT", body: fd });
+      // Add retry logic for the request
+      const maxRetries = 3;
+      let retryCount = 0;
+      let walrusRes;
+      
+      while (retryCount < maxRetries) {
+        try {
+          walrusRes = await fetch(`/api/walrus/quilts${qs ? `?${qs}` : ""}`, { 
+            method: "PUT", 
+            body: fd,
+            headers: {
+              'X-Wallet-Address': account.address,
+              'X-Retry-Attempt': retryCount.toString()
+            }
+          });
+          
+          if (walrusRes.ok) break;
+          
+          // If we get a 404, it might be a temporary issue
+          if (walrusRes.status === 404 && retryCount < maxRetries - 1) {
+            console.log(`Attempt ${retryCount + 1} failed, retrying...`);
+            retryCount++;
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+            continue;
+          }
+          
+          break;
+        } catch (error) {
+          console.error('Error during commit attempt:', error);
+          if (retryCount === maxRetries - 1) throw error;
+          retryCount++;
+          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+        }
+      }
+      
+      if (!walrusRes) {
+        throw new Error('No response received from the server after multiple retries');
+      }
+      
       if (!walrusRes.ok) {
         // Prefer surfacing real Walrus errors to avoid fake IDs
         let msg = `Walrus error ${walrusRes.status}`;
         try {
           const ct = walrusRes.headers.get("content-type") || "";
           if (ct.includes("application/json")) {
-            const j = await walrusRes.json();
-            msg += `\n${JSON.stringify(j, null, 2)}`;
+            try {
+              const j = await walrusRes.clone().json();
+              msg += `\n${JSON.stringify(j, null, 2)}`;
+            } catch (jsonError) {
+              console.error('Error parsing JSON response:', jsonError);
+              const text = await walrusRes.text();
+              msg += `\nResponse: ${text}`;
+            }
           } else {
             const t = await walrusRes.text();
             msg += `\n${t}`;

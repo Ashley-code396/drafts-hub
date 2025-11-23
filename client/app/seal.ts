@@ -138,13 +138,11 @@ export async function createSessionKey(
   suiClient: SuiClient,
   address: string,
   packageId: string,
-  mvrName: string,
   ttlMin: number = 10
 ): Promise<SessionKey> {
   return await SessionKey.create({
     address,
     packageId,
-    mvrName,
     ttlMin,
     suiClient: suiClient as unknown as SealCompatibleClient,
   });

@@ -4,10 +4,10 @@ import { MagnifyingGlassIcon } from '@radix-ui/react-icons';
 import { useSignAndExecuteTransaction, useSuiClient, useCurrentAccount } from '@mysten/dapp-kit';
 import { useState } from 'react';
 import { useNetworkVariable } from '../networkConfig';
-import { useNavigate } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 
 export function CreateAllowlist() {
-  const navigate = useNavigate();
+  const router = useRouter();
   const [name, setName] = useState('');
   const account = useCurrentAccount();
   const packageId = useNetworkVariable('packageId');
@@ -90,7 +90,7 @@ export function CreateAllowlist() {
   }
 
   const handleViewAll = () => {
-    navigate(`/allowlist-example/admin/allowlists`);
+    router.push('/allowlist-example/admin/allowlists');
   };
 
   return (

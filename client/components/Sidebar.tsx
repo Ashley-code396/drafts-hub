@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { CreateAllowlist } from "../app/allowlist/CreateAllowlist";
 
 export function Sidebar() {
   return (
@@ -10,6 +11,12 @@ export function Sidebar() {
           <span className="inline-block h-4 w-4 rounded bg-black dark:bg-white" />
           Upload
         </label>
+      </div>
+      
+      {/* Allowlist Section */}
+      <div className="border-t border-zinc-200 px-3 py-4 dark:border-zinc-800">
+        <h3 className="mb-2 text-sm font-medium text-zinc-500">Allowlist</h3>
+        <CreateAllowlist />
       </div>
       <nav className="px-2 pb-4 text-sm">
         <div className="px-2 py-1.5 font-medium text-zinc-500">Filters</div>
